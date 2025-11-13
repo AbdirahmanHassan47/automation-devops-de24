@@ -1,16 +1,59 @@
-name: Docker Image 
+name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      log_errors:
+        description: "Generate error logs on test failure"
+        required: true
+        default: false
+        type: boolean
+
+env:
+  COINMARKETCAP_API_KEY: ${{ secrets.COINMARKETCAP_API_KEY }}
+  COINMARKETCAP_SYMBOLS: "BTC"
+  UPDATE_FREQ_SEC: 60
 
 jobs:
-
-  create-images:
-
+  test:
+    name: Run Tests
     runs-on: ubuntu-latest
 
+    env:
+      ARTIFACTS_DIR: test-artifacts
+
     steps:
-    - uses: actions/checkout@v4
-    - name: Build the Docker image
-      run: docker build . --file Dockerfile --tag helloworld:lates.
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python + uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies (main + dev extras)
+        run: |
+          uv sync --extra dev
+
+      - name: Run pytest with coverage
+        run: |
+          mkdir -p "${{ env.ARTIFACTS_DIR }}"
+          uv run pytest -v \
+            --cov=src \
+            --cov-report=term \
+            --cov-report=xml:${{ env.ARTIFACTS_DIR }}/coverage.xml \
+            --cov-report=html:${{ env.ARTIFACTS_DIR }}/htmlcov \
+            2>&1 | tee ${{ env.ARTIFACTS_DIR }}/pytest-output.log
+
+      - name: Upload artifacts on failure (logs + coverage)
+        if: ${{ failure() && inputs.log_errors }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-artifacts
+          path: ${{ env.ARTIFACTS_DIR }}
+
+      - name: Test completed
+        if: ${{ success() }}
+        run: echo "✅ Tests completed successfully!"
