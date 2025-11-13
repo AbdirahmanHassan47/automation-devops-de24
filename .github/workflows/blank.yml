@@ -1,36 +1,59 @@
-# This is a basic workflow to help you get started with Actions
+name: CI/CD Pipeline
 
-name: CI
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the "main" branch
   push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
-  # Allows you to run this workflow manually from the Actions tab
+    branches: [dev]
   workflow_dispatch:
+    inputs:
+      log_errors:
+        description: "Generate error logs on test failure"
+        required: true
+        default: false
+        type: boolean
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+env:
+  COINMARKETCAP_API_KEY: ${{ secrets.COINMARKETCAP_API_KEY }}
+  COINMARKETCAP_SYMBOLS: "BTC"
+  UPDATE_FREQ_SEC: 60
+
 jobs:
-  # This workflow contains a single job called "build"
-  build:
-    # The type of runner that the job will run on
+  test:
+    name: Run Tests
     runs-on: ubuntu-latest
 
-    # Steps represent a sequence of tasks that will be executed as part of the job
+    env:
+      ARTIFACTS_DIR: test-artifacts
+
     steps:
-      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
-      - uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-      # Runs a single command using the runners shell
-      - name: Run a one-line script
-        run: echo Hello, world!
+      - name: Setup Python + uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
 
-      # Runs a set of commands using the runners shell
-      - name: Run a multi-line script
+      - name: Install dependencies (main + dev extras)
         run: |
-          echo Add other actions to build,
-          echo test, and deploy your project.
+          uv sync --extra dev
+
+      - name: Run pytest with coverage
+        run: |
+          mkdir -p "${{ env.ARTIFACTS_DIR }}"
+          uv run pytest -v \
+            --cov=src \
+            --cov-report=term \
+            --cov-report=xml:${{ env.ARTIFACTS_DIR }}/coverage.xml \
+            --cov-report=html:${{ env.ARTIFACTS_DIR }}/htmlcov \
+            2>&1 | tee ${{ env.ARTIFACTS_DIR }}/pytest-output.log
+
+      - name: Upload artifacts on failure (logs + coverage)
+        if: ${{ failure() && inputs.log_errors }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-artifacts
+          path: ${{ env.ARTIFACTS_DIR }}
+
+      - name: Test completed
+        if: ${{ success() }}
+        run: echo "✅ Tests completed successfully!"
